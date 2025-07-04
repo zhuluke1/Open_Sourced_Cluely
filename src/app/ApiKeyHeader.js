@@ -346,9 +346,18 @@ export class ApiKeyHeader extends LitElement {
             const isValid = await this.validateApiKey(this.apiKey.trim());
 
             if (isValid) {
-                console.log('API key valid - starting slide out animation');
-                this.startSlideOutAnimation();
-                this.validatedApiKey = this.apiKey.trim();
+                console.log('API key valid - checking system permissions...');
+                
+                const permissionResult = await this.checkAndRequestPermissions();
+                
+                if (permissionResult.success) {
+                    console.log('All permissions granted - starting slide out animation');
+                    this.startSlideOutAnimation();
+                    this.validatedApiKey = this.apiKey.trim();
+                } else {
+                    this.errorMessage = permissionResult.error || 'Permission setup required';
+                    console.log('Permission setup incomplete:', permissionResult);
+                }
             } else {
                 this.errorMessage = 'Invalid API key - please check and try again';
                 console.log('API key validation failed');
@@ -395,6 +404,58 @@ export class ApiKeyHeader extends LitElement {
         } catch (error) {
             console.error('API key validation network error:', error);
             return apiKey.length >= 20; // Fallback for network issues
+        }
+    }
+
+    async checkAndRequestPermissions() {
+        if (!window.require) {
+            return { success: true };
+        }
+
+        const { ipcRenderer } = window.require('electron');
+        
+        try {
+            const permissions = await ipcRenderer.invoke('check-system-permissions');
+            console.log('[Permissions] Current status:', permissions);
+            
+            if (!permissions.needsSetup) {
+                return { success: true };
+            }
+
+            if (!permissions.microphone) {
+                console.log('[Permissions] Requesting microphone permission...');
+                const micResult = await ipcRenderer.invoke('request-microphone-permission');
+                
+                if (!micResult.success) {
+                    console.log('[Permissions] Microphone permission denied');
+                    await ipcRenderer.invoke('open-system-preferences', 'microphone');
+                    return { 
+                        success: false, 
+                        error: 'Please grant microphone access in System Preferences' 
+                    };
+                }
+            }
+
+            if (!permissions.screen) {
+                console.log('[Permissions] Screen recording permission needed');
+                await ipcRenderer.invoke('open-system-preferences', 'screen-recording');
+                
+                this.errorMessage = 'Please grant screen recording permission and try again';
+                this.requestUpdate();
+                
+                return { 
+                    success: false, 
+                    error: 'Please grant screen recording access in System Preferences' 
+                };
+            }
+
+            return { success: true };
+        } catch (error) {
+            console.error('[Permissions] Error checking/requesting permissions:', error);
+            return { 
+                success: false, 
+                error: 'Failed to check permissions' 
+            };
         }
     }
 

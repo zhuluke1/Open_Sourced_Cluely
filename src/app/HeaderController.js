@@ -81,11 +81,31 @@ class HeaderTransitionManager {
 
                     if (error) {
                         console.warn('[HeaderController] Login payload indicates verification failure. Proceeding to AppHeader UI only.');
-                        this.transitionToAppHeader();
+                        // Check permissions before transitioning
+                        const permissionResult = await this.checkPermissions();
+                        if (permissionResult.success) {
+                            this.transitionToAppHeader();
+                        } else {
+                            console.log('[HeaderController] Permissions not granted after login error');
+                            if (this.apiKeyHeader) {
+                                this.apiKeyHeader.errorMessage = permissionResult.error || 'Permission setup required';
+                                this.apiKeyHeader.requestUpdate();
+                            }
+                        }
                     }
                 } catch (error) {
                     console.error('[HeaderController] Sign-in failed', error);
-                    this.transitionToAppHeader();
+                    // Check permissions before transitioning
+                    const permissionResult = await this.checkPermissions();
+                    if (permissionResult.success) {
+                        this.transitionToAppHeader();
+                    } else {
+                        console.log('[HeaderController] Permissions not granted after sign-in failure');
+                        if (this.apiKeyHeader) {
+                            this.apiKeyHeader.errorMessage = permissionResult.error || 'Permission setup required';
+                            this.apiKeyHeader.requestUpdate();
+                        }
+                    }
                 }
             });
             
@@ -125,7 +145,17 @@ class HeaderTransitionManager {
                         console.log('[HeaderController] Firebase sign-in successful via ID token');
                     } else {
                         console.warn('[HeaderController] No ID token received from deeplink, virtual key request may fail');
-                        this.transitionToAppHeader();
+                        // Check permissions before transitioning
+                        const permissionResult = await this.checkPermissions();
+                        if (permissionResult.success) {
+                            this.transitionToAppHeader();
+                        } else {
+                            console.log('[HeaderController] Permissions not granted after Firebase auth');
+                            if (this.apiKeyHeader) {
+                                this.apiKeyHeader.errorMessage = permissionResult.error || 'Permission setup required';
+                                this.apiKeyHeader.requestUpdate();
+                            }
+                        }
                     }
                 } catch (error) {
                     console.error('[HeaderController] Firebase auth failed:', error);
@@ -173,18 +203,31 @@ class HeaderTransitionManager {
             }
 
             if (user) {
-                console.log('[HeaderController] User is logged in, transitioning to AppHeader');
-                this.transitionToAppHeader(!this.hasApiKey);
+                console.log('[HeaderController] User is logged in, checking permissions...');
+                const permissionResult = await this.checkPermissions();
+                if (permissionResult.success) {
+                    this.transitionToAppHeader(!this.hasApiKey);
+                } else {
+                    console.log('[HeaderController] Permissions not granted, staying on ApiKeyHeader');
+                    if (this.apiKeyHeader) {
+                        this.apiKeyHeader.errorMessage = permissionResult.error || 'Permission setup required';
+                        this.apiKeyHeader.requestUpdate();
+                    }
+                }
             } else if (this.hasApiKey) {
-                console.log('[HeaderController] No Firebase user but API key exists, showing AppHeader');
-                this.transitionToAppHeader(false);
+                console.log('[HeaderController] No Firebase user but API key exists, checking permissions...');
+                const permissionResult = await this.checkPermissions();
+                if (permissionResult.success) {
+                    this.transitionToAppHeader(false);
+                } else {
+                    console.log('[HeaderController] Permissions not granted, staying on ApiKeyHeader');
+                }
             } else {
                 console.log('[HeaderController] No auth & no API key — showing ApiKeyHeader');
                 this.transitionToApiKeyHeader();
             }
         });
     }
-
 
     notifyHeaderState(stateOverride) {
         const state = stateOverride || this.currentHeaderType || 'apikey';
@@ -193,33 +236,46 @@ class HeaderTransitionManager {
         }
     }
 
-      async _bootstrap() {
-              let storedKey = null;
-              if (window.require) {
-                  try {
-                      storedKey = await window
-                          .require('electron')
-                          .ipcRenderer.invoke('get-current-api-key');
-                  } catch (_) {}
-              }
-              this.hasApiKey = !!storedKey;
-        
-              const user = await new Promise(resolve => {
-                  const unsubscribe = onAuthStateChanged(auth, u => {
-                      unsubscribe();
-                      resolve(u);
-                  });
-              });
-        
-              if (user || this.hasApiKey) {
-                  await this._resizeForApp();
-                  this.ensureHeader('app');
-              } else {
-                  await this._resizeForApiKey();
-                  this.ensureHeader('apikey');
-              }
-    }
+    async _bootstrap() {
+        let storedKey = null;
+        if (window.require) {
+            try {
+                storedKey = await window
+                    .require('electron')
+                    .ipcRenderer.invoke('get-current-api-key');
+            } catch (_) {}
+        }
+        this.hasApiKey = !!storedKey;
 
+        const user = await new Promise(resolve => {
+            const unsubscribe = onAuthStateChanged(auth, u => {
+                unsubscribe();
+                resolve(u);
+            });
+        });
+
+        if (user || this.hasApiKey) {
+            const permissionResult = await this.checkPermissions();
+            
+            if (permissionResult.success) {
+                await this._resizeForApp();
+                this.ensureHeader('app');
+            } else {
+                await this._resizeForApiKey();
+                this.ensureHeader('apikey');
+                
+                setTimeout(() => {
+                    if (this.apiKeyHeader) {
+                        this.apiKeyHeader.errorMessage = permissionResult.error || 'Permission setup required';
+                        this.apiKeyHeader.requestUpdate();
+                    }
+                }, 100);
+            }
+        } else {
+            await this._resizeForApiKey();
+            this.ensureHeader('apikey');
+        }
+    }
 
     async transitionToAppHeader(animate = true) {
         if (this.currentHeaderType === 'app') {
@@ -249,23 +305,69 @@ class HeaderTransitionManager {
     }
 
     _resizeForApp() {
-            if (!window.require) return;
-            return window
-                .require('electron')
-                .ipcRenderer.invoke('resize-header-window', { width: 353, height: 60 })
-                .catch(() => {});
+        if (!window.require) return;
+        return window
+            .require('electron')
+            .ipcRenderer.invoke('resize-header-window', { width: 353, height: 60 })
+            .catch(() => {});
+    }
+
+    async _resizeForApiKey() {
+        if (!window.require) return;
+        return window
+            .require('electron')
+            .ipcRenderer.invoke('resize-header-window', { width: 285, height: 220 })
+            .catch(() => {});
+    }
+
+    async transitionToApiKeyHeader() {
+        await this._resizeForApiKey();
+        
+        if (this.currentHeaderType !== 'apikey') {
+            this.ensureHeader('apikey');
+        }
+        
+        if (this.apiKeyHeader) this.apiKeyHeader.reset();
+    }
+
+    async checkPermissions() {
+        if (!window.require) {
+            return { success: true };
         }
 
-        async transitionToApiKeyHeader() {
-                await window.require('electron')
-                    .ipcRenderer.invoke('resize-header-window', { width: 285, height: 220 });
+        const { ipcRenderer } = window.require('electron');
+        
+        try {
+            // Check permission status
+            const permissions = await ipcRenderer.invoke('check-system-permissions');
+            console.log('[HeaderController] Current permissions:', permissions);
             
-                if (this.currentHeaderType !== 'apikey') {
-                    this.ensureHeader('apikey');
-                }
-            
-                 if (this.apiKeyHeader) this.apiKeyHeader.reset();
+            if (!permissions.needsSetup) {
+                return { success: true };
             }
+
+            // If permissions are not set up, return false
+            let errorMessage = '';
+            if (!permissions.microphone && !permissions.screen) {
+                errorMessage = 'Microphone and screen recording access required';
+            } else if (!permissions.microphone) {
+                errorMessage = 'Microphone access required';
+            } else if (!permissions.screen) {
+                errorMessage = 'Screen recording access required';
+            }
+            
+            return { 
+                success: false, 
+                error: errorMessage
+            };
+        } catch (error) {
+            console.error('[HeaderController] Error checking permissions:', error);
+            return { 
+                success: false, 
+                error: 'Failed to check permissions' 
+            };
+        }
+    }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
