@@ -205,7 +205,7 @@ export class ApiKeyHeader extends LitElement {
             cursor: pointer;
             transition: background 0.15s ease;
             position: relative;
-            overflow: hidden;
+            overflow: visible;
         }
 
         .action-button::after {
