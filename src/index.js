@@ -596,4 +596,4 @@ function initAutoUpdater() {
     } catch (e) {
         console.error('[AutoUpdater] Failed to initialise:', e);
     }
-}
+} 

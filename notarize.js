@@ -24,4 +24,4 @@ exports.notarizeApp = async function (context) {
   });
 
   console.log(`Successfully notarized ${appName}`);
-}; 
+};  

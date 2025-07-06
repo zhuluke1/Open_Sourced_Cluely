@@ -54,4 +54,4 @@ if (process.argv.includes('--watch')) {
     watch();
 } else {
     build();
-} 
+}  

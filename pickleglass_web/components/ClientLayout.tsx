@@ -39,6 +39,6 @@ export default function ClientLayout({
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
       />
-    </div>
+    </div> 
   )
 } 
